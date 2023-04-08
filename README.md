@@ -1,6 +1,6 @@
 # ChatBot Clínica Médica
 
-Este exemplo de chat bot foi desenvolvido por Natália Satie Motokubo Halker e Luiz Ricardo Bitencourt atendendo aos requisitos do curso de Processamento de Linguagem Natual do Professor Alexandre Donizeti Alves (UFABC).
+Este exemplo de chat bot foi desenvolvido por Natália Satie Motokubo Halker e Luiz Ricardo Bitencourt atendendo aos requisitos do curso de Processamento de Linguagem Natural do Professor Alexandre Donizeti Alves (UFABC).
 
 ## Your Project
 
