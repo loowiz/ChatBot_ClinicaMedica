@@ -3,7 +3,6 @@ STATUS:
 ---------------------
 Implementar:
 - Uso de API do Google Calendar (criação de evento na agenda)  ===> https://developers.google.com/calendar/api/guides/create-events?hl=pt-br#:~:text=your%20users'%20calendars.-,Add%20an%20event,of%20the%20logged%20in%20user.
-- Uso de API do Gmail (envio de e-mail ao paciente)  ===> https://webninjadeveloper.com/javascript/javascript-gmail-api-project-to-send-email-view-inbox-messages-in-browser-using-html5/
 
 Intent agendamento: 
  - Resolver: não compara nomes com acento ===> string.normalize('NFD').replace(/[\u0300-\u036f]/g, "");
@@ -11,6 +10,8 @@ Intent agendamento:
  - Resolver: horários am/pm
 
 FINALIZADAS:
+ - Uso de API do Gmail: email de agendamento
+ - Uso de API do Gmail: email de cancelamento
  - Intent remove agendamento
  - Intent profissional novo cadastro
  - Intent lista médicos
@@ -32,6 +33,50 @@ const app = express();
 // Sheet API adresses
 const DOCTORSHEET = "https://sheetdb.io/api/v1/hh94ro8u5yutb";
 const APPSHEET = "https://sheetdb.io/api/v1/h17j2313u9pye";
+
+// Gmail API (dependência 'nodemailer' incluída no 'package.json')
+// Segui este tutorial: https://www.youtube.com/watch?v=-rcRf7yswfM
+const nodemailer = require("nodemailer");
+const { google } = require("googleapis");
+
+// Misc constants
+const MAIL_FROM = "...@gmail.com";
+
+// Google API Credentials
+const CLIENT_ID = "...";
+const CLIENT_SECRET = "...";
+const REDIRECT_URI = "...";
+const REFRESH_TOKEN = "...";
+
+// Google Cloud oAuth client
+const oAuth2Client = new google.auth.OAuth2(
+  CLIENT_ID,
+  CLIENT_SECRET,
+  REDIRECT_URI
+);
+oAuth2Client.setCredentials({ refresh_token: REFRESH_TOKEN });
+
+// Async function to send an email using Gmail API
+async function sendMail(data) {
+  try {
+    const accessToken = await oAuth2Client.getAccessToken();
+    const transport = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        type: "OAuth2",
+        user: "...@gmail.com",
+        clientId: CLIENT_ID,
+        clientSecret: CLIENT_SECRET,
+        refreshToken: REFRESH_TOKEN,
+        accessToken: accessToken,
+      },
+    });
+    const result = await transport.sendMail(data);
+    return result;
+  } catch (error) {
+    return error;
+  }
+}
 
 // Config body parser for JSON data
 app.use(bodyParser.json());
@@ -213,6 +258,54 @@ app.post("/dialogflow", function (req, res) {
                       // Post on the Sheet
                       axios.post(APPSHEET, apDataSheet);
 
+                      // Create the mail dataset
+                      const mailOptions = {
+                        from: MAIL_FROM,
+                        to: paciente_email,
+                        subject: "ClínicaMédica: Confirmação de agendamento",
+                        text:
+                          "Olá, " +
+                          paciente_nome +
+                          " " +
+                          paciente_sobrenome +
+                          "!\n\nVocê acaba de agendar uma consulta com Dr(a) " +
+                          medico_nome +
+                          " " +
+                          medico_sobrenome +
+                          " para o dia " +
+                          apDay +
+                          "/" +
+                          apMonth +
+                          "/" +
+                          apYear +
+                          ", às " +
+                          apHour +
+                          ":00.\n\n Solicitamos chegar com 15 minutos de antecedência para abertura de ficha. Tenha um ótimo dia!\n\nAtenciosamente,\nClínicaMédica",
+                        html:
+                          "Olá, " +
+                          paciente_nome +
+                          " " +
+                          paciente_sobrenome +
+                          "!<br><br>Você acaba de agendar uma consulta com Dr(a) " +
+                          medico_nome +
+                          " " +
+                          medico_sobrenome +
+                          " para o dia " +
+                          apDay +
+                          "/" +
+                          apMonth +
+                          "/" +
+                          apYear +
+                          ", às " +
+                          apHour +
+                          ":00.<br><br> Solicitamos chegar com 15 minutos de antecedência para abertura de ficha. Tenha um ótimo dia!<br><br>Atenciosamente,<br>ClínicaMédica",
+                      };
+
+                      // Send the email using Gmail API
+                      sendMail(mailOptions)
+                        .then((result) => console.log("Mail sent!\n\n", result))
+                        .catch((error) => console.log(error.message));
+
                       // Send success message
                       return res.json({
                         fulfillmentText:
@@ -281,6 +374,56 @@ app.post("/dialogflow", function (req, res) {
               "Desculpe, mas não há consultas agendadas para o dia e hora informados. Confira seus dados e tente novamente.",
           });
         } else {
+          // Create the mail dataset
+          const mailOptions = {
+            from: MAIL_FROM,
+            to: consultas[0].paciente_email,
+            subject: "ClínicaMédica: Cancelamento de consulta",
+            text:
+              "Olá, " +
+              paciente_nome +
+              " " +
+              paciente_sobrenome +
+              "!\n\nVocê acaba de cancelar sua consulta" + 
+              /*" com Dr(a) " +
+              medico_nome +
+              " " +
+              medico_sobrenome + */
+              ", que estava agendada para o dia " +
+              apDay +
+              "/" +
+              apMonth +
+              "/" +
+              apYear +
+              ", às " +
+              hora +
+              ":00.\n\n Estamos à disposição para futuras consultas. Tenha um ótimo dia!\n\nAtenciosamente,\nClínicaMédica",
+            html:
+              "Olá, " +
+              paciente_nome +
+              " " +
+              paciente_sobrenome +
+              "!<br><br>Você acaba de cancelar sua consulta" +
+              /*" com Dr(a) " +
+              medico_nome +
+              " " +
+              medico_sobrenome + */
+              ", que estava agendada para o dia " +
+              apDay +
+              "/" +
+              apMonth +
+              "/" +
+              apYear +
+              ", às " +
+              hora +
+              ":00.<br><br> Estamos à disposição para futuras consultas. Tenha um ótimo dia!<br><br>Atenciosamente,<br>ClínicaMédica",
+          };
+
+          // Send the email using Gmail API
+          sendMail(mailOptions)
+            .then((result) => console.log("Mail sent!\n\n", result))
+            .catch((error) => console.log(error.message));
+
           return axios
             .delete(APPSHEET + "/consulta_id/" + consultas[0].consulta_id)
             .then((response) => {
