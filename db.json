@@ -1,0 +1,37 @@
+{
+  "doctors": [
+    {
+      "name": "Dr. João da Silva",
+      "speciality": "Clínico Geral",
+      "horarios": [
+        "09:00",
+        "10:00",
+        "11:00",
+        "14:00",
+        "15:00"
+      ]
+    },
+    {
+      "name": "Dra. Maria Souza",
+      "speciality": "Pediatra",
+      "apphours": [
+        "10:00",
+        "11:00",
+        "15:00",
+        "16:00",
+        "17:00"
+      ]
+    },
+    {
+      "name": "Dr. Carlos Fernandes",
+      "speciality": "Dermatologista",
+      "apphours": [
+        "08:00",
+        "09:00",
+        "14:00",
+        "15:00",
+        "16:00"
+      ]
+    }
+  ]
+}
