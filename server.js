@@ -9,11 +9,9 @@ Intent agendamento:
  - Resolver: não compara nomes com acento ===> string.normalize('NFD').replace(/[\u0300-\u036f]/g, "");
  - Resolver: não diferencia 0:00 de 12:00
  - Resolver: horários am/pm
- 
-Intent remove agendamento:
- - Não iniciada
 
 FINALIZADAS:
+ - Intent remove agendamento
  - Intent profissional novo cadastro
  - Intent lista médicos
  - Intent login
@@ -238,6 +236,58 @@ app.post("/dialogflow", function (req, res) {
                 }
               });
           }
+        }
+      });
+  }
+
+  /*************************************
+  INTENT: cancelar agendamento
+  *************************************/
+  if (intentName == "cancelar agendamento") {
+    // Get the data
+    data = req.body.queryResult.parameters["dia"];
+    hora = req.body.queryResult.parameters["hora"];
+    paciente_nome = req.body.queryResult.parameters["nome"];
+    paciente_sobrenome = req.body.queryResult.parameters["sobrenome"];
+
+    // Split "data" and "hora" strings
+    let dataQuebrada = splitDate(data);
+    apDay = dataQuebrada[0];
+    apMonth = dataQuebrada[1];
+    apYear = dataQuebrada[2];
+
+    return axios
+      .get(
+        APPSHEET +
+          "/search?paciente_nome=" +
+          paciente_nome +
+          "&paciente_sobrenome=" +
+          paciente_sobrenome +
+          "&consulta_dia=" +
+          apDay +
+          "/" +
+          apMonth +
+          "/" +
+          apYear +
+          "&consulta_hora=" +
+          hora
+      )
+      .then((response) => {
+        const consultas = response.data;
+
+        if (!consultas.length) {
+          return res.json({
+            fulfillmentText:
+              "Desculpe, mas não há consultas agendadas para o dia e hora informados. Confira seus dados e tente novamente.",
+          });
+        } else {
+          return axios
+            .delete(APPSHEET + "/consulta_id/" + consultas[0].consulta_id)
+            .then((response) => {
+              return res.json({
+                fulfillmentText: "Consulta desmarcada com sucesso!",
+              });
+            });
         }
       });
   }
