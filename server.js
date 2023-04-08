@@ -1,24 +1,25 @@
 /*=-=-=-=-=-=-=-=-=-=
 STATUS:
 ---------------------
+Implementar:
+- Uso de API do Google Calendar (criação de evento na agenda)  ===> https://developers.google.com/calendar/api/guides/create-events?hl=pt-br#:~:text=your%20users'%20calendars.-,Add%20an%20event,of%20the%20logged%20in%20user.
+- Uso de API do Gmail (envio de e-mail ao paciente)  ===> https://webninjadeveloper.com/javascript/javascript-gmail-api-project-to-send-email-view-inbox-messages-in-browser-using-html5/
+
 Intent agendamento: 
  - Resolver: não compara nomes com acento ===> string.normalize('NFD').replace(/[\u0300-\u036f]/g, "");
  - Resolver: não diferencia 0:00 de 12:00
+ - Resolver: horários am/pm
  
 Intent remove agendamento:
  - Não iniciada
- 
-Intent lista médicos:
- - Finalizada!
 
-Intent login
- - Finalizada!
- 
-Intent criar-agenda
- - Finalizada!
-  
-Intent remover-agenda
- - Finalizada!
+FINALIZADAS:
+ - Intent profissional novo cadastro
+ - Intent lista médicos
+ - Intent login
+ - Intent criar-agenda
+ - Intent remover-agenda
+ - Uso de API do Telegram -> Ativado no DialogFlow
 =-=-=-=-=-=-=-=-=-=*/
 
 // Dependencies
@@ -57,6 +58,7 @@ app.post("/dialogflow", function (req, res) {
   var medico_id;
   var medico_dia;
   var medico_hora;
+  var agenda_id;
 
   // Patient data
   var consulta_id;
@@ -127,22 +129,30 @@ app.post("/dialogflow", function (req, res) {
           // Get the doctor ID
           medico_id = medicos[0].medico_id;
 
-          return axios
-            .get(
-              APPSHEET +
-                "/search?consulta_dia=" +
-                apDay +
-                "/" +
-                apMonth +
-                "/" +
-                apYear +
-                "&consulta_hora=" +
-                parseInt(apHour)
-            )
-            .then((response) => {
-              const datas = response.data;
+          // Get the weekday to compare with doctor´s agenda
+          const dataFormat = new Date(data);
+          let weekdayPatient = dataFormat.getDay();
 
-              console.log(
+          // Verify if it is a valid weekday for this doctor
+          let weekdayOk = false;
+          for (let i = 0; i < medicos.length; i++) {
+            if (medicos[i].medico_dia == weekdayPatient) {
+              weekdayOk = true;
+            }
+          }
+
+          if (!weekdayOk) {
+            return res.json({
+              fulfillmentText:
+                "Desculpe, mas o médico escolhido não tem agenda para " +
+                weekdayToString(weekdayPatient) +
+                ", no horário " +
+                apHour +
+                ":00.",
+            });
+          } else {
+            return axios
+              .get(
                 APPSHEET +
                   "/search?consulta_dia=" +
                   apDay +
@@ -152,67 +162,82 @@ app.post("/dialogflow", function (req, res) {
                   apYear +
                   "&consulta_hora=" +
                   parseInt(apHour)
-              );
+              )
+              .then((response) => {
+                const datas = response.data;
 
-              if (datas.length) {
-                return res.json({
-                  fulfillmentText:
-                    "Desculpe, mas já existe outra consulta " +
-                    "agendada neste mesmo horário. " +
-                    "Por favor, escolha outro horário.",
-                });
-              } else {
-                // Generate a sequential ID
-                return axios
-                  .get(
-                    APPSHEET + "?sort_by=consulta_id&sort_order=desc&limit=1"
-                  ) // https://docs.sheetdb.io/sheetdb-api/read
-                  .then((response) => {
-                    const lastRecord = response.data[0];
-                    if (lastRecord) {
-                      consulta_id = parseInt(lastRecord.consulta_id) + 1;
-                    } else {
-                      consulta_id = 1;
-                    }
+                console.log(
+                  APPSHEET +
+                    "/search?consulta_dia=" +
+                    apDay +
+                    "/" +
+                    apMonth +
+                    "/" +
+                    apYear +
+                    "&consulta_hora=" +
+                    parseInt(apHour)
+                );
 
-                    // Create the appointment dataset to post
-                    const apDataSheet = [
-                      {
-                        consulta_id: consulta_id,
-                        consulta_dia: apDay + "/" + apMonth + "/" + apYear,
-                        consulta_hora: apHour,
-                        medico_id: medico_id,
-                        paciente_nome: paciente_nome,
-                        paciente_sobrenome: paciente_sobrenome,
-                        paciente_email: paciente_email,
-                      },
-                    ];
-
-                    // Post on the Sheet
-                    axios.post(APPSHEET, apDataSheet);
-
-                    // Send success message
-                    return res.json({
-                      fulfillmentText:
-                        "Agendamento realizado com sucesso para o(a) Dr(a) " +
-                        medico_nome +
-                        " " +
-                        medico_sobrenome +
-                        " no dia: " +
-                        apDay +
-                        "/" +
-                        apMonth +
-                        "/" +
-                        apYear +
-                        " às " +
-                        apHour +
-                        ":" +
-                        apMin +
-                        ".",
-                    });
+                if (datas.length) {
+                  return res.json({
+                    fulfillmentText:
+                      "Desculpe, mas já existe outra consulta " +
+                      "agendada neste mesmo horário. " +
+                      "Por favor, escolha outro horário.",
                   });
-              }
-            });
+                } else {
+                  // Generate a sequential ID
+                  return axios
+                    .get(
+                      APPSHEET + "?sort_by=consulta_id&sort_order=desc&limit=1"
+                    ) // https://docs.sheetdb.io/sheetdb-api/read
+                    .then((response) => {
+                      const lastRecord = response.data[0];
+                      if (lastRecord) {
+                        consulta_id = parseInt(lastRecord.consulta_id) + 1;
+                      } else {
+                        consulta_id = 1;
+                      }
+
+                      // Create the appointment dataset to post
+                      const apDataSheet = [
+                        {
+                          consulta_id: consulta_id,
+                          consulta_dia: apDay + "/" + apMonth + "/" + apYear,
+                          consulta_hora: apHour,
+                          medico_id: medico_id,
+                          paciente_nome: paciente_nome,
+                          paciente_sobrenome: paciente_sobrenome,
+                          paciente_email: paciente_email,
+                        },
+                      ];
+
+                      // Post on the Sheet
+                      axios.post(APPSHEET, apDataSheet);
+
+                      // Send success message
+                      return res.json({
+                        fulfillmentText:
+                          "Agendamento realizado com sucesso para o(a) Dr(a) " +
+                          medico_nome +
+                          " " +
+                          medico_sobrenome +
+                          " no dia: " +
+                          apDay +
+                          "/" +
+                          apMonth +
+                          "/" +
+                          apYear +
+                          " às " +
+                          apHour +
+                          ":" +
+                          apMin +
+                          ".",
+                      });
+                    });
+                }
+              });
+          }
         }
       });
   }
@@ -244,8 +269,10 @@ app.post("/dialogflow", function (req, res) {
               list += "\n" + weekdayToString(medicos[i].medico_dia) + ": ";
               lastDay = weekdayToString(medicos[i].medico_dia);
             }
-            list += medicos[i].medico_hora + ":00";
+            list += medicos[i].medico_hora + ":00 ";
           }
+
+          // Melhorar exibição (testar pelo Telegram)
 
           return res.json({
             fulfillmentText:
@@ -315,16 +342,96 @@ app.post("/dialogflow", function (req, res) {
     // Get the data
     medico_nome = req.body.queryResult.parameters["medico_nome"];
     medico_sobrenome = req.body.queryResult.parameters["medico_sobrenome"];
-    medico_dia = req.body.queryResult.parameters["dia"];
+    medico_dia = stringToWeekday(req.body.queryResult.parameters["dia"]);
     medico_hora = req.body.queryResult.parameters["hora"];
-    
-    // Verificar se já não existe
-    // Verificar último ID da agenda
-    // Verificar último ID de médico
-    // Registrar valores!
-    
-    }
-  
+
+    return axios
+      .get(
+        DOCTORSHEET +
+          "/search?medico_nome=" +
+          medico_nome +
+          "&medico_sobrenome=" +
+          medico_sobrenome
+      )
+      .then((response) => {
+        const medicos = response.data;
+        if (medicos.length) {
+          return res.json({
+            fulfillmentText:
+              "Desculpe, mas já existe um médico com o mesmo nome cadastrado. Entre em contato com a clínica, caso tenha se esquecido de seu ID.",
+          });
+        } else {
+          // Get the last doctor ID and set the new one
+          return axios
+            .get(DOCTORSHEET + "?sort_by=medico_id&sort_order=desc&limit=1")
+            .then((response) => {
+              const lastDoctor = response.data[0];
+              if (!lastDoctor) {
+                medico_id = 1;
+                agenda_id = 1;
+
+                // Set the new doctor
+                const docDataSheet = [
+                  {
+                    agenda_id: agenda_id,
+                    medico_id: medico_id,
+                    medico_nome: medico_nome,
+                    medico_sobrenome: medico_sobrenome,
+                    medico_dia: medico_dia,
+                    medico_hora: medico_hora,
+                  },
+                ];
+
+                // Post on the Sheet
+                axios.post(DOCTORSHEET, docDataSheet);
+                return res.json({
+                  fulfillmentText:
+                    "Cadastro realizado com sucesso! Seu ID é " +
+                    medico_id +
+                    ".",
+                });
+              } else {
+                medico_id = parseInt(lastDoctor.medico_id) + 1;
+                // Get the last agenda Id and set the new one
+                return axios
+                  .get(
+                    DOCTORSHEET + "?sort_by=agenda_id&sort_order=desc&limit=1"
+                  )
+                  .then((response) => {
+                    const lastAgenda = response.data[0];
+                    if (!lastAgenda) {
+                      agenda_id = 1; // redundante, mas vou deixar assim por enquanto
+                    } else {
+                      agenda_id = parseInt(lastAgenda.agenda_id) + 1;
+
+                      // Set the new doctor
+                      const docDataSheet = [
+                        {
+                          agenda_id: agenda_id,
+                          medico_id: medico_id,
+                          medico_nome: medico_nome,
+                          medico_sobrenome: medico_sobrenome,
+                          medico_dia: medico_dia,
+                          medico_hora: medico_hora,
+                        },
+                      ];
+
+                      // Post on the Sheet
+                      axios.post(DOCTORSHEET, docDataSheet);
+                      return res.json({
+                        fulfillmentText:
+                          "Cadastro realizado com sucesso! Seu ID é " +
+                          medico_id +
+                          ".",
+                      });
+                    }
+                  });
+              }
+            });
+        }
+      });
+  }
+
   /*************************************
   INTENT: criar-horario
   *************************************/
@@ -392,7 +499,6 @@ app.post("/dialogflow", function (req, res) {
                 });
               }
             });
-            
         }
       });
   }
@@ -418,7 +524,7 @@ app.post("/dialogflow", function (req, res) {
       )
       .then((response) => {
         const registro = response.data;
-              
+
         if (!registro.length) {
           return res.json({
             fulfillmentText:
@@ -430,9 +536,7 @@ app.post("/dialogflow", function (req, res) {
           });
         } else {
           return axios
-            .delete(
-              DOCTORSHEET + "/agenda_id/" + registro[0].agenda_id
-            )
+            .delete(DOCTORSHEET + "/agenda_id/" + registro[0].agenda_id)
             .then((response) => {
               return res.json({
                 fulfillmentText: "Registro excluído com sucesso!",
@@ -476,8 +580,8 @@ function weekdayToString(data) {
 }
 
 function stringToWeekday(data) {
-  data = data.toLowerCase()
-  
+  data = data.toLowerCase();
+
   switch (data) {
     case "domingo":
       return 0;
