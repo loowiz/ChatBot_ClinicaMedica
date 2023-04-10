@@ -1,24 +1,24 @@
 /*=-=-=-=-=-=-=-=-=-=
 STATUS:
 ---------------------
-Implementar:
-- Uso de API do Google Calendar (criação de evento na agenda)  ===> https://developers.google.com/calendar/api/guides/create-events?hl=pt-br#:~:text=your%20users'%20calendars.-,Add%20an%20event,of%20the%20logged%20in%20user.
-
-Intent agendamento: 
- - Resolver: não compara nomes com acento ===> string.normalize('NFD').replace(/[\u0300-\u036f]/g, "");
- - Resolver: não diferencia 0:00 de 12:00
- - Resolver: horários am/pm
+Pequenos bugs na intent de agendamento: 
+ - Não compara nomes com acento ===> string.normalize('NFD').replace(/[\u0300-\u036f]/g, "");
+ - Não diferencia 0:00 de 12:00 (configuração de horários am/pm)
+ - Paciente agenda às 8h, mas grava às 20h (configuração de horários am/pm)
+ - Agendamento no calendário registra 3 dias após o registrado (subtraí 3 pra resolver a força) mas ainda está registrando no dia errado :(
+ - Agendamento bloqueia tentativas de novos agendamentos no mesmo horário (ver freebusy)
 
 FINALIZADAS:
  - Uso de API do Gmail: email de agendamento
  - Uso de API do Gmail: email de cancelamento
+ - Uso de API do Telegram -> Ativado no DialogFlow
+ - Uso de API do Google Calendar (criação de evento na agenda)  
  - Intent remove agendamento
  - Intent profissional novo cadastro
  - Intent lista médicos
  - Intent login
  - Intent criar-agenda
  - Intent remover-agenda
- - Uso de API do Telegram -> Ativado no DialogFlow
 =-=-=-=-=-=-=-=-=-=*/
 
 // Dependencies
@@ -31,24 +31,27 @@ const axios = require("axios");
 const app = express();
 
 // Sheet API adresses
-const DOCTORSHEET = "https://sheetdb.io/api/v1/hh94ro8u5yutb";
-const APPSHEET = "https://sheetdb.io/api/v1/h17j2313u9pye";
+const DOCTORSHEET = "";
+const APPSHEET = "";
 
 // Gmail API (dependência 'nodemailer' incluída no 'package.json')
 // Segui este tutorial: https://www.youtube.com/watch?v=-rcRf7yswfM
 const nodemailer = require("nodemailer");
 const { google } = require("googleapis");
+//const { OAuth2 } = google.auth;
 
 // Misc constants
-const MAIL_FROM = "...@gmail.com";
+const MAIL_FROM = "";
 
 // Google API Credentials
-const CLIENT_ID = "...";
-const CLIENT_SECRET = "...";
-const REDIRECT_URI = "...";
-const REFRESH_TOKEN = "...";
+const CLIENT_ID = "";
+const CLIENT_SECRET = "";
+const REDIRECT_URI = "https://developers.google.com/oauthplayground";
+const REFRESH_TOKEN = ""; // GMail + Google Calendar
+const AUTHUSER = "";
 
 // Google Cloud oAuth client
+// Segui este tutorial: https://youtu.be/zrLf4KMs71E
 const oAuth2Client = new google.auth.OAuth2(
   CLIENT_ID,
   CLIENT_SECRET,
@@ -56,7 +59,53 @@ const oAuth2Client = new google.auth.OAuth2(
 );
 oAuth2Client.setCredentials({ refresh_token: REFRESH_TOKEN });
 
-// Async function to send an email using Gmail API
+// Google Calendar service
+const calendar = google.calendar({
+  version: "v3",
+  auth: oAuth2Client,
+});
+
+// ================================================================
+// FUNCTION: Create a Google Calendar event using Google API
+// ================================================================
+function createCalendarEvent(eventData) {
+  calendar.freebusy.query(
+    {
+      resource: {
+        timeMin: eventData.start.dateTime, //eventStartTime.toISOString(),
+        timeMax: eventData.end.dateTime, //eventEndTime.toISOString(),
+        timeZone: "America/Sao_Paulo",
+        items: [{ id: "primary" }],
+      },
+    },
+    (err, res) => {
+      if (err) {
+        return console.error("Free busy query error: ", err);
+      }
+      const eventsArr = res.data.calendars.primary.busy;
+      if (!eventsArr.length) {
+        return calendar.events.insert(
+          {
+            calendarId: "primary",
+            resource: eventData,
+          },
+          (err) => {
+            if (err) {
+              return console.error("Calendar event creation error: ", err);
+            }
+            return console.log("Calendar event created.");
+          }
+        );
+        return console.log("Sorry. I'm busy at this time!");
+      }
+    }
+  );
+}
+// ================================================================
+
+// ================================================================
+// FUNCTION: Send an email using Gmail API
+// ================================================================
 async function sendMail(data) {
   try {
     const accessToken = await oAuth2Client.getAccessToken();
@@ -64,7 +113,7 @@ async function sendMail(data) {
       service: "gmail",
       auth: {
         type: "OAuth2",
-        user: "...@gmail.com",
+        user: AUTHUSER,
         clientId: CLIENT_ID,
         clientSecret: CLIENT_SECRET,
         refreshToken: REFRESH_TOKEN,
@@ -77,6 +126,119 @@ async function sendMail(data) {
     return error;
   }
 }
+// ================================================================
+
+// ================================================================
+// FUNCTION: Return the string reference for weekday number
+// ================================================================
+function weekdayToString(data) {
+  switch (parseInt(data)) {
+    case 0:
+      return "Domingo";
+      break;
+    case 1:
+      return "Segunda-feira";
+      break;
+    case 2:
+      return "Terça-feira";
+      break;
+    case 3:
+      return "Quarta-feira";
+      break;
+    case 4:
+      return "Quinta-feira";
+      break;
+    case 5:
+      return "Sexta-feira";
+      break;
+    case 6:
+      return "Sábado";
+      break;
+  }
+}
+// ================================================================
+
+// ================================================================
+// FUNCTION: Return the weekday number by its name
+// ================================================================
+function stringToWeekday(data) {
+  data = data.toLowerCase();
+  switch (data) {
+    case "domingo":
+      return 0;
+      break;
+    case "segunda-feira":
+      return 1;
+      break;
+    case "segunda":
+      return 1;
+      break;
+    case "terça-feira":
+      return 2;
+      break;
+    case "terça":
+      return 2;
+      break;
+    case "terca-feira":
+      return 2;
+      break;
+    case "terca":
+      return 2;
+      break;
+    case "quarta-feira":
+      return 3;
+      break;
+    case "quarta":
+      return 3;
+      break;
+    case "quinta-feira":
+      return 4;
+      break;
+    case "quinta":
+      return 4;
+      break;
+    case "sexta-feira":
+      return 5;
+      break;
+    case "sexta":
+      return 5;
+      break;
+    case "sábado":
+      return 6;
+      break;
+    case "sabado":
+      return 6;
+      break;
+  }
+}
+// ================================================================
+
+// ================================================================
+// FUNCTION: Split the date from DialogFlow format
+//           Format example: 2023-04-05T00:00:00-03:00
+// ================================================================
+function splitDate(data) {
+  let splittedDate = [3];
+  splittedDate[0] = data.split("-")[2].split("T")[0];
+  splittedDate[1] = data.split("-")[1];
+  splittedDate[2] = data.split("-")[0];
+
+  return splittedDate;
+}
+// ================================================================
+
+// ================================================================
+// FUNCTION: Split the time from DialogFlow format
+//           Format example: 2023-04-05T00:00:00-03:00
+// ================================================================
+function splitHour(data) {
+  let splittedHour = [2];
+  splittedHour[0] = data.split("T")[1].split("-")[0].split(":")[0];
+  splittedHour[1] = data.split("T")[1].split("-")[0].split(":")[1];
+
+  return splittedHour;
+}
+// ================================================================
 
 // Config body parser for JSON data
 app.use(bodyParser.json());
@@ -209,18 +371,6 @@ app.post("/dialogflow", function (req, res) {
               .then((response) => {
                 const datas = response.data;
 
-                console.log(
-                  APPSHEET +
-                    "/search?consulta_dia=" +
-                    apDay +
-                    "/" +
-                    apMonth +
-                    "/" +
-                    apYear +
-                    "&consulta_hora=" +
-                    parseInt(apHour)
-                );
-
                 if (datas.length) {
                   return res.json({
                     fulfillmentText:
@@ -306,6 +456,44 @@ app.post("/dialogflow", function (req, res) {
                         .then((result) => console.log("Mail sent!\n\n", result))
                         .catch((error) => console.log(error.message));
 
+                      // Create event dataset
+                      const event = {
+                        summary:
+                          "Dr(a) " + medico_nome + " " + medico_sobrenome,
+                        location:
+                          "Av. dos Estados, 5001 - Bangú, Santo André - SP, 09210-580",
+                        description:
+                          "Consulta com o paciente " +
+                          paciente_nome +
+                          " " +
+                          paciente_sobrenome +
+                          ".",
+                        colorId: medico_id,
+                        start: {
+                          dateTime: new Date(
+                            apYear,
+                            apMonth - 1,
+                            apDay - 3, // Bug: Sempre agenda 3 dias depois no calendário. Gabiarra: subtrair 3
+                            apHour + 3, // Fuso horário
+                            0
+                          ),
+                          timeZone: "America/Sao_Paulo",
+                        },
+                        end: {
+                          dateTime: new Date(
+                            apYear,
+                            apMonth - 1,
+                            apDay - 3, // Bug: Sempre agenda 3 dias depois no calendário. Gabiarra: subtrair 3
+                            apHour + 4, // Fuso horário + 1
+                            0
+                          ),
+                          timeZone: "America/Sao_Paulo",
+                        },
+                      };
+
+                      // Create the event
+                      createCalendarEvent(event);
+
                       // Send success message
                       return res.json({
                         fulfillmentText:
@@ -384,7 +572,7 @@ app.post("/dialogflow", function (req, res) {
               paciente_nome +
               " " +
               paciente_sobrenome +
-              "!\n\nVocê acaba de cancelar sua consulta" + 
+              "!\n\nVocê acaba de cancelar sua consulta" +
               /*" com Dr(a) " +
               medico_nome +
               " " +
@@ -744,99 +932,3 @@ app.post("/dialogflow", function (req, res) {
 const listener = app.listen(process.env.PORT, () => {
   console.log("Your app is listening on port " + listener.address().port);
 });
-
-// Functions
-function weekdayToString(data) {
-  switch (parseInt(data)) {
-    case 0:
-      return "Domingo";
-      break;
-    case 1:
-      return "Segunda-feira";
-      break;
-    case 2:
-      return "Terça-feira";
-      break;
-    case 3:
-      return "Quarta-feira";
-      break;
-    case 4:
-      return "Quinta-feira";
-      break;
-    case 5:
-      return "Sexta-feira";
-      break;
-    case 6:
-      return "Sábado";
-      break;
-  }
-}
-
-function stringToWeekday(data) {
-  data = data.toLowerCase();
-
-  switch (data) {
-    case "domingo":
-      return 0;
-      break;
-    case "segunda-feira":
-      return 1;
-      break;
-    case "segunda":
-      return 1;
-      break;
-    case "terça-feira":
-      return 2;
-      break;
-    case "terça":
-      return 2;
-      break;
-    case "terca-feira":
-      return 2;
-      break;
-    case "terca":
-      return 2;
-      break;
-    case "quarta-feira":
-      return 3;
-      break;
-    case "quarta":
-      return 3;
-      break;
-    case "quinta-feira":
-      return 4;
-      break;
-    case "quinta":
-      return 4;
-      break;
-    case "sexta-feira":
-      return 5;
-      break;
-    case "sexta":
-      return 5;
-      break;
-    case "sábado":
-      return 6;
-      break;
-    case "sabado":
-      return 6;
-      break;
-  }
-}
-
-function splitDate(data) {
-  let splittedDate = [3];
-  splittedDate[0] = data.split("-")[2].split("T")[0];
-  splittedDate[1] = data.split("-")[1];
-  splittedDate[2] = data.split("-")[0];
-
-  return splittedDate;
-}
-
-function splitHour(data) {
-  let splittedHour = [2];
-  splittedHour[0] = data.split("T")[1].split("-")[0].split(":")[0];
-  splittedHour[1] = data.split("T")[1].split("-")[0].split(":")[1];
-
-  return splittedHour;
-}
