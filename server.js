@@ -30,11 +30,8 @@ const app = express();
 
 // Sheet API adresses
 // NOVOS links:
-const DOCTORSHEET = "https://sheetdb.io/api/v1/5dbh7n9h327ml";
-const APPSHEET = "https://sheetdb.io/api/v1/7ud9en41scjzv";
-// VELHOS:
-//const DOCTORSHEET = "https://sheetdb.io/api/v1/hh94ro8u5yutb";
-//const APPSHEET = "https://sheetdb.io/api/v1/h17j2313u9pye";
+const DOCTORSHEET = "";
+const APPSHEET = "";
 
 // Gmail API (dependência 'nodemailer' incluída no 'package.json')
 // Segui este tutorial: https://www.youtube.com/watch?v=-rcRf7yswfM
@@ -43,16 +40,14 @@ const { google } = require("googleapis");
 //const { OAuth2 } = google.auth;
 
 // Misc constants
-const MAIL_FROM = "Clínica Médica &#128512; <plnufabc2023.1@gmail.com>";
+const MAIL_FROM = "";
 
 // Google API Credentials
-const CLIENT_ID =
-  "148477512822-mjv6mo1ops30u7v2lrfol9942vgku40f.apps.googleusercontent.com";
-const CLIENT_SECRET = "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";
-const REDIRECT_URI = "https://developers.google.com/oauthplayground";
-const REFRESH_TOKEN =
-  "1//04LFGcOFRkGisCgYIARAAGAQSNwF-L9IriR1xT5Y_XjJ1aclDrWFV5Flgdj5JWssPl8i9_HB9TCC6Sh9ODX6s7ykUSyflG-7WE54"; // GMail + Google Calendar
-const AUTHUSER = "plnufabc2023.1@gmail.com";
+const CLIENT_ID = "";
+const CLIENT_SECRET = "";
+const REDIRECT_URI = "";
+const REFRESH_TOKEN = ""; // GMail + Google Calendar
+const AUTHUSER = "";
 
 // Google Cloud oAuth client
 // Segui este tutorial: https://youtu.be/zrLf4KMs71E
