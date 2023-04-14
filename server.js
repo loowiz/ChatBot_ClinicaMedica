@@ -1,24 +1,22 @@
 /*=-=-=-=-=-=-=-=-=-=
 STATUS:
 ---------------------
-Pequenos bugs na intent de agendamento: 
- - Não compara nomes com acento ===> string.normalize('NFD').replace(/[\u0300-\u036f]/g, "");
- - Não diferencia 0:00 de 12:00 (configuração de horários am/pm)
- - Paciente agenda às 8h, mas grava às 20h (configuração de horários am/pm)
- - Agendamento no calendário registra 3 dias após o registrado (subtraí 3 pra resolver a força) mas ainda está registrando no dia errado :(
- - Agendamento bloqueia tentativas de novos agendamentos no mesmo horário (ver freebusy)
-
 FINALIZADAS:
  - Uso de API do Gmail: email de agendamento
  - Uso de API do Gmail: email de cancelamento
  - Uso de API do Telegram -> Ativado no DialogFlow
  - Uso de API do Google Calendar (criação de evento na agenda)  
+ - Uso de API do Google Calendar (remoção de evento na agenda)  
+ - Intent consultar agendamento
  - Intent remove agendamento
  - Intent profissional novo cadastro
  - Intent lista médicos
  - Intent login
  - Intent criar-agenda
  - Intent remover-agenda
+ 
+ Bugs gerais:
+ - Não compara nomes com acento ===> string.normalize('NFD').replace(/[\u0300-\u036f]/g, "");
 =-=-=-=-=-=-=-=-=-=*/
 
 // Dependencies
@@ -31,8 +29,12 @@ const axios = require("axios");
 const app = express();
 
 // Sheet API adresses
-const DOCTORSHEET = "";
-const APPSHEET = "";
+// NOVOS links:
+const DOCTORSHEET = "https://sheetdb.io/api/v1/5dbh7n9h327ml";
+const APPSHEET = "https://sheetdb.io/api/v1/7ud9en41scjzv";
+// VELHOS:
+//const DOCTORSHEET = "https://sheetdb.io/api/v1/hh94ro8u5yutb";
+//const APPSHEET = "https://sheetdb.io/api/v1/h17j2313u9pye";
 
 // Gmail API (dependência 'nodemailer' incluída no 'package.json')
 // Segui este tutorial: https://www.youtube.com/watch?v=-rcRf7yswfM
@@ -41,14 +43,16 @@ const { google } = require("googleapis");
 //const { OAuth2 } = google.auth;
 
 // Misc constants
-const MAIL_FROM = "";
+const MAIL_FROM = "Clínica Médica &#128512; <plnufabc2023.1@gmail.com>";
 
 // Google API Credentials
-const CLIENT_ID = "";
-const CLIENT_SECRET = "";
+const CLIENT_ID =
+  "148477512822-mjv6mo1ops30u7v2lrfol9942vgku40f.apps.googleusercontent.com";
+const CLIENT_SECRET = "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";
 const REDIRECT_URI = "https://developers.google.com/oauthplayground";
-const REFRESH_TOKEN = ""; // GMail + Google Calendar
-const AUTHUSER = "";
+const REFRESH_TOKEN =
+  "1//04LFGcOFRkGisCgYIARAAGAQSNwF-L9IriR1xT5Y_XjJ1aclDrWFV5Flgdj5JWssPl8i9_HB9TCC6Sh9ODX6s7ykUSyflG-7WE54"; // GMail + Google Calendar
+const AUTHUSER = "plnufabc2023.1@gmail.com";
 
 // Google Cloud oAuth client
 // Segui este tutorial: https://youtu.be/zrLf4KMs71E
@@ -69,37 +73,74 @@ const calendar = google.calendar({
 // FUNCTION: Create a Google Calendar event using Google API
 // ================================================================
 function createCalendarEvent(eventData) {
-  calendar.freebusy.query(
+  calendar.events.insert(
     {
-      resource: {
-        timeMin: eventData.start.dateTime, //eventStartTime.toISOString(),
-        timeMax: eventData.end.dateTime, //eventEndTime.toISOString(),
-        timeZone: "America/Sao_Paulo",
-        items: [{ id: "primary" }],
-      },
+      auth: oAuth2Client,
+      calendarId: "primary",
+      resource: eventData,
     },
-    (err, res) => {
+    function (err, event) {
       if (err) {
-        return console.error("Free busy query error: ", err);
+        console.error("Erro ao criar o evento: " + err);
+        return;
       }
-      const eventsArr = res.data.calendars.primary.busy;
-      if (!eventsArr.length) {
-        return calendar.events.insert(
-          {
-            calendarId: "primary",
-            resource: eventData,
-          },
-          (err) => {
-            if (err) {
-              return console.error("Calendar event creation error: ", err);
-            }
-            return console.log("Calendar event created.");
-          }
-        );
-        return console.log("Sorry. I'm busy at this time!");
-      }
+      console.log("Evento criado com sucesso: %s", event.htmlLink);
     }
   );
+}
+// ================================================================
+
+// ================================================================
+// FUNCTION: Get event by title
+// ================================================================
+async function getEventIdByTitle(eventTitle) {
+  try {
+    const response = await calendar.events.list({
+      auth: oAuth2Client,
+      calendarId: "primary",
+      timeMin: new Date().toISOString(),
+      maxResults: 10,
+      singleEvents: true,
+      orderBy: "startTime",
+      q: eventTitle,
+    });
+    const events = response.data.items;
+    if (events.length == 0) {
+      console.log("Nenhum evento encontrado com este título.");
+      return null;
+    } else {
+      const eventId = events[0].id;
+      console.log("O ID do evento é " + eventId);
+      return eventId;
+    }
+  } catch (err) {
+    console.error("Erro ao buscar eventos: " + err);
+    return null;
+  }
+}
+// ================================================================
+
+// ================================================================
+// FUNCTION: Remove a Google Calendar event using Google API
+// ================================================================
+async function removeEvent(eventTitle) {
+  try {
+    const eventId = await getEventIdByTitle(eventTitle);
+    if (!eventId) {
+      console.log("Evento não encontrado.");
+      return;
+    }
+    await calendar.events.delete({
+      auth: oAuth2Client,
+      calendarId: "primary",
+      eventId: eventId,
+    });
+    console.log("O ID do evento é " + eventId);
+    console.log("Evento excluído com sucesso!");
+    return;
+  } catch (err) {
+    console.error("Erro ao excluir o evento: " + err);
+  }
 }
 // ================================================================
 
@@ -252,34 +293,35 @@ app.get("/", (req, res) => {
   res.sendFile(__dirname + "/views/index.html");
 });
 
+// Doctor data
+var medico_nome;
+var medico_sobrenome;
+var medico_id;
+var medico_dia;
+var medico_hora;
+var agenda_id;
+
+// Patient data
+var consulta_id;
+var paciente_nome;
+var paciente_sobrenome;
+var paciente_email;
+var eventId;
+
+// Appointment data
+var data;
+let apDay;
+let apMonth;
+let apYear;
+
+var hora;
+let apHour;
+let apMin;
+
 // Webhook
 app.post("/dialogflow", function (req, res) {
   // Get the intent name
   var intentName = req.body.queryResult.intent.displayName;
-
-  // Doctor data
-  var medico_nome;
-  var medico_sobrenome;
-  var medico_id;
-  var medico_dia;
-  var medico_hora;
-  var agenda_id;
-
-  // Patient data
-  var consulta_id;
-  var paciente_nome;
-  var paciente_sobrenome;
-  var paciente_email;
-
-  // Appointment data
-  var data;
-  let apDay;
-  let apMonth;
-  let apYear;
-
-  var hora;
-  let apHour;
-  let apMin;
 
   /*************************************
   INTENT: agendamento
@@ -295,17 +337,17 @@ app.post("/dialogflow", function (req, res) {
     paciente_email = req.body.queryResult.parameters["email"];
 
     // Split "data" string
-    let dataQuebrada = splitDate(data);
-    apDay = dataQuebrada[0]; //apDay = data.split("-")[2].split("T")[0];
-    apMonth = dataQuebrada[1]; //apMonth = data.split("-")[1];
-    apYear = dataQuebrada[2]; //apYear = data.split("-")[0];
+    const dataRec = new Date(data);
+    const horaRec = new Date(hora);
+    const apDay = dataRec.getUTCDate();
+    const apMonth = dataRec.getUTCMonth() + 1; // Referência de Month inicia em 0
+    const apYear = dataRec.getUTCFullYear();
+    const apHour = horaRec.getUTCHours() - 3; // Ajusta fuso horário brasileiro
+    const apMin = horaRec.getUTCMinutes();
 
-    // Split "hora" string
-    // TODO:  00:00 = 12:00 (?)
-    //        2023-04-05T00:00:00-03:00
-    let horaQuebrada = splitHour(hora);
-    apHour = horaQuebrada[0]; //apHour = hora.split("T")[1].split("-")[0].split(":")[0];
-    apMin = horaQuebrada[1]; //apMin = hora.split("T")[1].split("-")[0].split(":")[1];
+    // Por padrão, o DialogFlow reconhece horários entre 1 e 12, sem marcação de am/pm, como padrão de 12h.
+    // A correção deveria ser feita no próprio DialogFlow, mas até o momento ele não permitiu editar as "actions" das "intents".
+    // Então, a melhor solução será indicar se o horário é am ou pm no momento do agendamento.
 
     // Get the sheet data and find the doctor
     // Melhoria: Se a pessoa digitar o nome errado, corrigir (ou salvar sem acentos e tudo minúsculo)
@@ -392,22 +434,6 @@ app.post("/dialogflow", function (req, res) {
                         consulta_id = 1;
                       }
 
-                      // Create the appointment dataset to post
-                      const apDataSheet = [
-                        {
-                          consulta_id: consulta_id,
-                          consulta_dia: apDay + "/" + apMonth + "/" + apYear,
-                          consulta_hora: apHour,
-                          medico_id: medico_id,
-                          paciente_nome: paciente_nome,
-                          paciente_sobrenome: paciente_sobrenome,
-                          paciente_email: paciente_email,
-                        },
-                      ];
-
-                      // Post on the Sheet
-                      axios.post(APPSHEET, apDataSheet);
-
                       // Create the mail dataset
                       const mailOptions = {
                         from: MAIL_FROM,
@@ -425,12 +451,14 @@ app.post("/dialogflow", function (req, res) {
                           " para o dia " +
                           apDay +
                           "/" +
-                          apMonth +
+                          apMonth.toString().padStart(2, "0") +
                           "/" +
                           apYear +
                           ", às " +
                           apHour +
-                          ":00.\n\n Solicitamos chegar com 15 minutos de antecedência para abertura de ficha. Tenha um ótimo dia!\n\nAtenciosamente,\nClínicaMédica",
+                          ":" +
+                          apMin.toString().padStart(2, "0") +
+                          ".\n\n Solicitamos chegar com 15 minutos de antecedência para abertura de ficha. Tenha um ótimo dia!\n\nAtenciosamente,\nClínicaMédica",
                         html:
                           "Olá, " +
                           paciente_nome +
@@ -443,12 +471,14 @@ app.post("/dialogflow", function (req, res) {
                           " para o dia " +
                           apDay +
                           "/" +
-                          apMonth +
+                          apMonth.toString().padStart(2, "0") +
                           "/" +
                           apYear +
                           ", às " +
                           apHour +
-                          ":00.<br><br> Solicitamos chegar com 15 minutos de antecedência para abertura de ficha. Tenha um ótimo dia!<br><br>Atenciosamente,<br>ClínicaMédica",
+                          ":" +
+                          apMin.toString().padStart(2, "0") +
+                          ".<br><br> Solicitamos chegar com 15 minutos de antecedência para abertura de ficha. Tenha um ótimo dia!<br><br>Atenciosamente,<br>ClínicaMédica",
                       };
 
                       // Send the email using Gmail API
@@ -459,7 +489,14 @@ app.post("/dialogflow", function (req, res) {
                       // Create event dataset
                       const event = {
                         summary:
-                          "Dr(a) " + medico_nome + " " + medico_sobrenome,
+                          "Dr(a) " +
+                          medico_nome +
+                          " " +
+                          medico_sobrenome +
+                          " com " +
+                          paciente_nome +
+                          " " +
+                          paciente_sobrenome,
                         location:
                           "Av. dos Estados, 5001 - Bangú, Santo André - SP, 09210-580",
                         description:
@@ -473,21 +510,21 @@ app.post("/dialogflow", function (req, res) {
                           dateTime: new Date(
                             apYear,
                             apMonth - 1,
-                            apDay - 3, // Bug: Sempre agenda 3 dias depois no calendário. Gabiarra: subtrair 3
+                            apDay,
                             apHour + 3, // Fuso horário
-                            0
+                            apMin
                           ),
-                          timeZone: "America/Sao_Paulo",
+                          timeZone: "UTC",
                         },
                         end: {
                           dateTime: new Date(
                             apYear,
                             apMonth - 1,
-                            apDay - 3, // Bug: Sempre agenda 3 dias depois no calendário. Gabiarra: subtrair 3
+                            apDay,
                             apHour + 4, // Fuso horário + 1
-                            0
+                            apMin
                           ),
-                          timeZone: "America/Sao_Paulo",
+                          timeZone: "UTC",
                         },
                       };
 
@@ -495,7 +532,7 @@ app.post("/dialogflow", function (req, res) {
                       createCalendarEvent(event);
 
                       // Send success message
-                      return res.json({
+                      res.json({
                         fulfillmentText:
                           "Agendamento realizado com sucesso para o(a) Dr(a) " +
                           medico_nome +
@@ -504,15 +541,32 @@ app.post("/dialogflow", function (req, res) {
                           " no dia: " +
                           apDay +
                           "/" +
-                          apMonth +
+                          apMonth.toString().padStart(2, "0") +
                           "/" +
                           apYear +
                           " às " +
                           apHour +
                           ":" +
-                          apMin +
+                          apMin.toString().padStart(2, "0") +
                           ".",
                       });
+
+                      // Create the appointment dataset to post
+                      const apDataSheet = [
+                        {
+                          consulta_id: consulta_id,
+                          consulta_dia: apDay + "/" + apMonth + "/" + apYear,
+                          consulta_hora: apHour,
+                          medico_id: medico_id,
+                          paciente_nome: paciente_nome,
+                          paciente_sobrenome: paciente_sobrenome,
+                          paciente_email: paciente_email,
+                          evento_titulo: event.summary,
+                        },
+                      ];
+
+                      // Post on the Sheet
+                      axios.post(APPSHEET, apDataSheet);
                     });
                 }
               });
@@ -530,6 +584,155 @@ app.post("/dialogflow", function (req, res) {
     hora = req.body.queryResult.parameters["hora"];
     paciente_nome = req.body.queryResult.parameters["nome"];
     paciente_sobrenome = req.body.queryResult.parameters["sobrenome"];
+
+    // Split "data" and "hora" strings
+    let dataQuebrada = splitDate(data);
+    apDay = dataQuebrada[0];
+    apMonth = dataQuebrada[1];
+    apYear = dataQuebrada[2];
+
+    return axios
+      .get(
+        APPSHEET +
+          "/search?paciente_nome=" +
+          paciente_nome +
+          "&paciente_sobrenome=" +
+          paciente_sobrenome +
+          "&consulta_dia=" +
+          apDay +
+          "/" +
+          apMonth +
+          "/" +
+          apYear +
+          "&consulta_hora=" +
+          hora
+      )
+      .then((response) => {
+        const consultas = response.data;
+
+        if (!consultas.length) {
+          return res.json({
+            fulfillmentText:
+              "Desculpe, mas não há consultas agendadas para o dia e hora informados. Confira seus dados e tente novamente.",
+          });
+        } else {
+          // Create the mail dataset
+          const mailOptions = {
+            from: MAIL_FROM,
+            to: consultas[0].paciente_email,
+            subject: "ClínicaMédica: Cancelamento de consulta",
+            text:
+              "Olá, " +
+              paciente_nome +
+              " " +
+              paciente_sobrenome +
+              "!\n\nVocê acaba de cancelar sua consulta" +
+              /*" com Dr(a) " +
+              medico_nome +
+              " " +
+              medico_sobrenome + */
+              ", que estava agendada para o dia " +
+              apDay +
+              "/" +
+              apMonth +
+              "/" +
+              apYear +
+              ", às " +
+              hora +
+              ":00.\n\n Estamos à disposição para futuras consultas. Tenha um ótimo dia!\n\nAtenciosamente,\nClínicaMédica",
+            html:
+              "Olá, " +
+              paciente_nome +
+              " " +
+              paciente_sobrenome +
+              "!<br><br>Você acaba de cancelar sua consulta" +
+              /*" com Dr(a) " +
+              medico_nome +
+              " " +
+              medico_sobrenome + */
+              ", que estava agendada para o dia " +
+              apDay +
+              "/" +
+              apMonth +
+              "/" +
+              apYear +
+              ", às " +
+              hora +
+              ":00.<br><br> Estamos à disposição para futuras consultas. Tenha um ótimo dia!<br><br>Atenciosamente,<br>ClínicaMédica",
+          };
+
+
+          // Delete event from Google Calendar
+          removeEvent(consultas[0].evento_titulo);
+
+          // Send the email using Gmail API
+          sendMail(mailOptions)
+            .then((result) => console.log("Mail sent!\n\n", result))
+            .catch((error) => console.log(error.message));
+
+          return axios
+            .delete(APPSHEET + "/consulta_id/" + consultas[0].consulta_id)
+            .then((response) => {
+              return res.json({
+                fulfillmentText: "Consulta desmarcada com sucesso!",
+              });
+            });
+        }
+      });
+  }
+
+  /*************************************
+  INTENT: consultar agendamento
+  *************************************/
+  if (intentName == "consultar agendamento") {
+    // Get the data
+    paciente_nome = req.body.queryResult.parameters["nome"];
+    paciente_sobrenome = req.body.queryResult.parameters["sobrenome"];
+
+    return axios
+      .get(
+        APPSHEET +
+          "/search?paciente_nome=" +
+          paciente_nome +
+          "&paciente_sobrenome=" +
+          paciente_sobrenome
+      )
+      .then((response) => {
+        const consultas = response.data;
+
+        if (!consultas.length) {
+          return res.json({
+            fulfillmentText:
+              "Desculpe, mas não há consultas agendadas para o paciente informado. Confira seus dados e tente novamente.",
+          });
+        } else {
+          // Mostrar resultado da consulta
+          //let hora = "";
+          let data_hora = "";
+
+          consultas.forEach(function (consulta) {
+            data_hora +=
+              consulta.consulta_dia + " " + consulta.consulta_hora + "h \n";
+            //hora = consulta.consulta_hora; "\n";
+          });
+
+          res.json({
+            fulfillmentText:
+              "Você possui os seguintes horários agendados: \n" +
+              data_hora +
+              "\nDeseja realizar novo agendamento ou remover horários?",
+          });
+        }
+      });
+  }
+
+  /*************************************
+  INTENT: consultar agendamento - desmarcar
+  *************************************/
+  if (intentName == "consultar agendamento - desmarcar") {
+    // Get the data
+    data = req.body.queryResult.parameters["data"];
+    hora = req.body.queryResult.parameters["hora"];
 
     // Split "data" and "hora" strings
     let dataQuebrada = splitDate(data);
@@ -642,12 +845,15 @@ app.post("/dialogflow", function (req, res) {
               medicos[i].medico_nome + " " + medicos[i].medico_sobrenome
             ) {
               list +=
-                medicos[i].medico_nome + " " + medicos[i].medico_sobrenome;
+                "\n\n" +
+                medicos[i].medico_nome +
+                " " +
+                medicos[i].medico_sobrenome;
               lastName =
                 medicos[i].medico_nome + " " + medicos[i].medico_sobrenome;
             }
             if (lastDay != weekdayToString(medicos[i].medico_dia)) {
-              list += "\n" + weekdayToString(medicos[i].medico_dia) + ": ";
+              list += "\n\t" + weekdayToString(medicos[i].medico_dia) + ": ";
               lastDay = weekdayToString(medicos[i].medico_dia);
             }
             list += medicos[i].medico_hora + ":00 ";
@@ -657,8 +863,9 @@ app.post("/dialogflow", function (req, res) {
 
           return res.json({
             fulfillmentText:
-              "Nesta clínica estão disponíveis os seguintes médicos: \n\n" +
-              list,
+              "Nesta clínica estão disponíveis os seguintes médicos:" +
+              list +
+              "\n\nGostaria de agendar, verificar agendamento ou cancelar uma consulta?",
           });
         } else {
           return res.json({
@@ -674,143 +881,59 @@ app.post("/dialogflow", function (req, res) {
   if (intentName == "profissional - login") {
     // Get the "profissional" data: Only the ID
     medico_id = req.body.queryResult.parameters["id"];
+    medico_nome = req.body.queryResult.parameters["nome"];
+    //medico_sobrenome = req.body.queryResult.parameters["sobrenome"];
 
     // Get the sheet data
-    return axios
-      .get(DOCTORSHEET + "/search?medico_id=" + medico_id)
-      .then((response) => {
-        const medicos = response.data;
+    return (
+      axios
+        .get(
+          DOCTORSHEET +
+            "/search?medico_id=" +
+            medico_id +
+            "&medico_nome=" +
+            medico_nome
+        ) // +
+        //"&medico_sobrenome=" + medico_sobrenome)
+        .then((response) => {
+          const medicos = response.data;
 
-        // Verify if the ID exists
-        if (!medicos.length) {
-          return res.json({
-            fulfillmentText:
-              "Desculpe, mas não existe profissional com o ID informado (" +
-              medico_id +
-              "). Solicite cadastramento!",
-          });
-        } else {
-          let horarios = "";
-          let nome = "";
-
-          medicos.forEach(function (medico) {
-            nome = medico.medico_nome + " " + medico.medico_sobrenome;
-            horarios +=
-              weekdayToString(medico.medico_dia) +
-              " " +
-              medico.medico_hora +
-              "h \n";
-          });
-
-          res.json({
-            fulfillmentText:
-              "O médico(a) " +
-              nome +
-              ", cadastrado(a) no ID " +
-              medico_id +
-              " possui os seguintes horários de atendimento cadastrados: \n\n" +
-              horarios +
-              '\n\nPara adicionar ou remover horários, digite "criar-horario" ou "remover-horario".',
-          });
-        }
-      });
-  }
-
-  /*************************************
-  INTENT: profissional - novo cadastro
-  *************************************/
-  if (intentName == "profissional - novo cadastro") {
-    // Get the data
-    medico_nome = req.body.queryResult.parameters["medico_nome"];
-    medico_sobrenome = req.body.queryResult.parameters["medico_sobrenome"];
-    medico_dia = stringToWeekday(req.body.queryResult.parameters["dia"]);
-    medico_hora = req.body.queryResult.parameters["hora"];
-
-    return axios
-      .get(
-        DOCTORSHEET +
-          "/search?medico_nome=" +
-          medico_nome +
-          "&medico_sobrenome=" +
-          medico_sobrenome
-      )
-      .then((response) => {
-        const medicos = response.data;
-        if (medicos.length) {
-          return res.json({
-            fulfillmentText:
-              "Desculpe, mas já existe um médico com o mesmo nome cadastrado. Entre em contato com a clínica, caso tenha se esquecido de seu ID.",
-          });
-        } else {
-          // Get the last doctor ID and set the new one
-          return axios
-            .get(DOCTORSHEET + "?sort_by=medico_id&sort_order=desc&limit=1")
-            .then((response) => {
-              const lastDoctor = response.data[0];
-              if (!lastDoctor) {
-                medico_id = 1;
-                agenda_id = 1;
-
-                // Set the new doctor
-                const docDataSheet = [
-                  {
-                    agenda_id: agenda_id,
-                    medico_id: medico_id,
-                    medico_nome: medico_nome,
-                    medico_sobrenome: medico_sobrenome,
-                    medico_dia: medico_dia,
-                    medico_hora: medico_hora,
-                  },
-                ];
-
-                // Post on the Sheet
-                axios.post(DOCTORSHEET, docDataSheet);
-                return res.json({
-                  fulfillmentText:
-                    "Cadastro realizado com sucesso! Seu ID é " +
-                    medico_id +
-                    ".",
-                });
-              } else {
-                medico_id = parseInt(lastDoctor.medico_id) + 1;
-                // Get the last agenda Id and set the new one
-                return axios
-                  .get(
-                    DOCTORSHEET + "?sort_by=agenda_id&sort_order=desc&limit=1"
-                  )
-                  .then((response) => {
-                    const lastAgenda = response.data[0];
-                    if (!lastAgenda) {
-                      agenda_id = 1; // redundante, mas vou deixar assim por enquanto
-                    } else {
-                      agenda_id = parseInt(lastAgenda.agenda_id) + 1;
-
-                      // Set the new doctor
-                      const docDataSheet = [
-                        {
-                          agenda_id: agenda_id,
-                          medico_id: medico_id,
-                          medico_nome: medico_nome,
-                          medico_sobrenome: medico_sobrenome,
-                          medico_dia: medico_dia,
-                          medico_hora: medico_hora,
-                        },
-                      ];
-
-                      // Post on the Sheet
-                      axios.post(DOCTORSHEET, docDataSheet);
-                      return res.json({
-                        fulfillmentText:
-                          "Cadastro realizado com sucesso! Seu ID é " +
-                          medico_id +
-                          ".",
-                      });
-                    }
-                  });
-              }
+          // Verify if the ID exists
+          if (!medicos.length) {
+            return res.json({
+              fulfillmentText:
+                "Desculpe, mas não a correspondência entre o ID e o nome não existe (" +
+                medico_id +
+                ": " +
+                medico_nome +
+                "). Solicite cadastramento!",
             });
-        }
-      });
+          } else {
+            let horarios = "";
+            let nome = "";
+
+            medicos.forEach(function (medico) {
+              nome = medico.medico_nome + " " + medico.medico_sobrenome;
+              horarios +=
+                weekdayToString(medico.medico_dia) +
+                " " +
+                medico.medico_hora +
+                "h \n";
+            });
+
+            res.json({
+              fulfillmentText:
+                "O médico(a) " +
+                nome +
+                ", cadastrado(a) no ID " +
+                medico_id +
+                " possui os seguintes horários de atendimento cadastrados: \n\n" +
+                horarios +
+                '\n\nPara adicionar ou remover horários, digite "criar-horario" ou "remover-horario".',
+            });
+          }
+        })
+    );
   }
 
   /*************************************
@@ -862,22 +985,37 @@ app.post("/dialogflow", function (req, res) {
                     "Desculpe, mas este dia e horário já estão disponíveis na sua agenda.",
                 });
               } else {
-                // Create the doctors dataset to post
-                const docDataSheet = [
-                  {
-                    medico_id: medico_id,
-                    medico_nome: medico_nome,
-                    medico_sobrenome: medico_sobrenome,
-                    medico_dia: medico_dia,
-                    medico_hora: medico_hora,
-                  },
-                ];
+                // Get the last agenda Id and set the new one
+                return axios
+                  .get(
+                    DOCTORSHEET + "?sort_by=agenda_id&sort_order=desc&limit=1"
+                  )
+                  .then((response) => {
+                    const lastAgenda = response.data[0];
+                    if (!lastAgenda) {
+                      agenda_id = 1;
+                    } else {
+                      agenda_id = parseInt(lastAgenda.agenda_id) + 1;
 
-                // Post on the Sheet
-                axios.post(DOCTORSHEET, docDataSheet);
-                return res.json({
-                  fulfillmentText: "Cadastro realizado com sucesso!",
-                });
+                      // Create the doctors dataset to post
+                      const docDataSheet = [
+                        {
+                          agenda_id: agenda_id,
+                          medico_id: medico_id,
+                          medico_nome: medico_nome,
+                          medico_sobrenome: medico_sobrenome,
+                          medico_dia: medico_dia,
+                          medico_hora: medico_hora,
+                        },
+                      ];
+
+                      // Post on the Sheet
+                      axios.post(DOCTORSHEET, docDataSheet);
+                      return res.json({
+                        fulfillmentText: "Cadastro realizado com sucesso!",
+                      });
+                    }
+                  });
               }
             });
         }
@@ -925,6 +1063,190 @@ app.post("/dialogflow", function (req, res) {
             });
         }
       });
+  }
+
+  /*************************************
+  INTENT: profissional - novo cadastro
+  *************************************/
+  if (intentName == "profissional - novo cadastro") {
+    // Get the data
+    medico_nome = req.body.queryResult.parameters["medico_nome"];
+    medico_sobrenome = req.body.queryResult.parameters["medico_sobrenome"];
+    //medico_dia = stringToWeekday(req.body.queryResult.parameters["dia"]);
+    //medico_hora = req.body.queryResult.parameters["hora"];
+
+    return axios
+      .get(
+        DOCTORSHEET +
+          "/search?medico_nome=" +
+          medico_nome +
+          "&medico_sobrenome=" +
+          medico_sobrenome
+      )
+      .then((response) => {
+        const medicos = response.data;
+        if (medicos.length) {
+          return res.json({
+            fulfillmentText:
+              "Desculpe, mas já existe um médico com o mesmo nome cadastrado. Entre em contato com a clínica, caso tenha se esquecido de seu ID.",
+          });
+        } else {
+          // Get the last doctor ID and set the new one
+          //medico_dia = stringToWeekday(req.body.queryResult.parameters["dia"]);
+          //medico_hora = req.body.queryResult.parameters["hora"];
+          return axios
+            .get(DOCTORSHEET + "?sort_by=medico_id&sort_order=desc&limit=1")
+            .then((response) => {
+              const lastDoctor = response.data[0];
+              if (!lastDoctor) {
+                medico_id = 1;
+                agenda_id = 1;
+
+                // Set the new doctor
+                /*const docDataSheet = [
+                  {
+                    agenda_id: agenda_id,
+                    medico_id: medico_id,
+                    medico_nome: medico_nome,
+                    medico_sobrenome: medico_sobrenome,
+                    //medico_dia: medico_dia,
+                    //medico_hora: medico_hora,
+                  },
+                ];
+
+                // Post on the Sheet
+                axios.post(DOCTORSHEET, docDataSheet);*/
+                return res.json({
+                  fulfillmentText:
+                    //"Cadastro realizado com sucesso! Seu ID é " +
+                    "Seu ID é " +
+                    medico_id +
+                    ". Finalize seu cadastro registrando pelo menos 1 horário. Digite criar-horario",
+                });
+              } else {
+                medico_id = parseInt(lastDoctor.medico_id) + 1;
+                // Get the last agenda Id and set the new one
+                return axios
+                  .get(
+                    DOCTORSHEET + "?sort_by=agenda_id&sort_order=desc&limit=1"
+                  )
+                  .then((response) => {
+                    const lastAgenda = response.data[0];
+                    if (!lastAgenda) {
+                      agenda_id = 1; // redundante, mas vou deixar assim por enquanto
+                    } else {
+                      agenda_id = parseInt(lastAgenda.agenda_id) + 1;
+
+                      // Set the new doctor
+                      /*const docDataSheet = [
+                        {
+                          agenda_id: agenda_id,
+                          medico_id: medico_id,
+                          medico_nome: medico_nome,
+                          medico_sobrenome: medico_sobrenome,
+                          //medico_dia: medico_dia,
+                          //medico_hora: medico_hora,
+                        },
+                      ];
+
+                      // Post on the Sheet
+                      axios.post(DOCTORSHEET, docDataSheet);*/
+                      return res.json({
+                        fulfillmentText:
+                          //"Cadastro realizado com sucesso! Seu ID é " +
+                          "Seu ID é " +
+                          medico_id +
+                          ". Finalize seu cadastro registrando pelo menos 1 horário. Digite criar-horario",
+                      });
+                    }
+                  });
+              }
+            });
+        }
+      });
+  }
+
+  /*************************************
+  INTENT: profissional - novo cadastro
+  *************************************/
+  if (intentName == "profissional - novo cadastro - criar-horario") {
+    // Get the data
+    medico_dia = stringToWeekday(req.body.queryResult.parameters["dia"]);
+    medico_hora = req.body.queryResult.parameters["horario"];
+
+    // Get the sheet data
+    /*    return axios
+    .get(DOCTORSHEET + "/search?medico_id=" + medico_id)
+    .then((response) => {
+      const medicos = response.data;
+
+      // Verify if the ID existis
+      if (!medicos.length) {
+        return res.json({
+          fulfillmentText:
+            "Desculpe, mas não existe profissional com o ID informado (" +
+            medico_id +
+            "). Solicite cadastramento!",
+        });
+      } else {
+        medico_nome = medicos[0].medico_nome;
+        medico_sobrenome = medicos[0].medico_sobrenome;
+*/
+    // Verify if the agenda exists
+    return axios
+      .get(
+        DOCTORSHEET +
+          "/search?medico_dia=" +
+          medico_dia +
+          "&medico_hora=" +
+          medico_hora +
+          "&medico_nome=" +
+          medico_nome +
+          "&medico_sobrenome=" +
+          medico_sobrenome
+      )
+      .then((response) => {
+        const horarios = response.data;
+
+        if (horarios.length) {
+          return res.json({
+            fulfillmentText:
+              "Desculpe, mas este dia e horário já estão disponíveis na sua agenda.",
+          });
+        } else {
+          // Get the last agenda Id and set the new one
+          return axios
+            .get(DOCTORSHEET + "?sort_by=agenda_id&sort_order=desc&limit=1")
+            .then((response) => {
+              const lastAgenda = response.data[0];
+              if (!lastAgenda) {
+                agenda_id = 1;
+              } else {
+                agenda_id = parseInt(lastAgenda.agenda_id) + 1;
+
+                // Create the doctors dataset to post
+                const docDataSheet = [
+                  {
+                    agenda_id: agenda_id,
+                    medico_id: medico_id,
+                    medico_nome: medico_nome,
+                    medico_sobrenome: medico_sobrenome,
+                    medico_dia: medico_dia,
+                    medico_hora: medico_hora,
+                  },
+                ];
+
+                // Post on the Sheet
+                axios.post(DOCTORSHEET, docDataSheet);
+                return res.json({
+                  fulfillmentText: "Cadastro realizado com sucesso!",
+                });
+              }
+            });
+        }
+      });
+    //}
+    //});
   }
 });
 
