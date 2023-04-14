@@ -2,6 +2,9 @@
 
 Este exemplo de chat bot foi desenvolvido por Natália Satie Motokubo Halker e Luiz Ricardo Bitencourt atendendo aos requisitos do curso de Processamento de Linguagem Natural do Professor Alexandre Donizeti Alves (UFABC).
 
+* A pasta 'DialogFlow' contém o arquivo gerado pelo DialogFlow em formato 'zip', pronto para ser importado em um novo projeto.
+* A pasta 'Sheets' contém as duas planilhas usadas para armazenar dados de médicos e dados de agendamentos.
+
 ## Your Project
 
 On the front-end,
